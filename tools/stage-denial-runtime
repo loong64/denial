@@ -14,7 +14,17 @@ CONTROL_BINARY="${DENIAL_PC_CONTROL_BINARY:-$RUST_TARGET/release/denialctl}"
 PORTAL_BINARY="${DENIAL_PC_PORTAL_BINARY:-$RUST_TARGET/release/denial-portal}"
 BUNDLE="${DENIAL_PC_BUNDLE:-$PACKAGE_INPUT_ROOT/bundle}"
 BUNDLE_ASSEMBLY="${DENIAL_PC_BUNDLE_ASSEMBLY:-$PACKAGE_INPUT_ROOT/flutter-release}"
-SETTINGS_BUNDLE="${DENIAL_PC_SETTINGS_BUNDLE:-$ROOT/settings_app/build/linux/x64/release/bundle}"
+PACKAGE_FLUTTER_CPU="${DENIAL_PACKAGE_FLUTTER_CPU:-}"
+if [[ -z "$PACKAGE_FLUTTER_CPU" ]]; then
+  host_arch="$(uname -m)"
+  case "$host_arch" in
+    x86_64) PACKAGE_FLUTTER_CPU=x64 ;;
+    aarch64) PACKAGE_FLUTTER_CPU=arm64 ;;
+    loongarch64) PACKAGE_FLUTTER_CPU=loong64 ;;
+    *) PACKAGE_FLUTTER_CPU="$host_arch" ;;
+  esac
+fi
+SETTINGS_BUNDLE="${DENIAL_PC_SETTINGS_BUNDLE:-$ROOT/settings_app/build/linux-$PACKAGE_FLUTTER_CPU/release/bundle}"
 PACKAGE_RELEASE="${DENIAL_PACKAGE_RELEASE:-1}"
 RELEASE_TAG="${DENIAL_RELEASE_TAG:-}"
 REQUESTED_PACKAGE_VERSION="${DENIAL_PACKAGE_VERSION:-}"
@@ -169,8 +179,12 @@ engine_root="$temporary_stage/denial-flutter-engine"
 denial_root="$temporary_stage/denial"
 install -d -m 0755 "$engine_root" "$denial_root"
 
-engine_source_root="$ROOT/prebuilt/flutter-engine/linux-x64-release"
+engine_source_root="$ROOT/prebuilt/flutter-engine/linux-${PACKAGE_FLUTTER_CPU}-release"
 source_lock="$ROOT/prebuilt/flutter-engine/SOURCE_LOCK.json"
+[[ -d "$engine_source_root" ]] \
+  || die "Flutter engine metadata directory is missing: $engine_source_root"
+[[ -f "$source_lock" ]] \
+  || die "Flutter engine source lock is missing: $source_lock"
 expected_engine_sha256="$(cut -d' ' -f1 < "$engine_source_root/libflutter_engine.so.sha256")"
 actual_engine_sha256="$(sha256sum "$BUNDLE/lib/libflutter_engine.so" | cut -d' ' -f1)"
 [[ "$actual_engine_sha256" == "$expected_engine_sha256" ]] \
