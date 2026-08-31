@@ -1099,7 +1099,11 @@ fn png_dimensions(data: &[u8]) -> Option<(u32, u32)> {
 }
 
 fn jpeg_dimensions(data: &[u8]) -> Option<(u32, u32)> {
-    data.strip_circumfix(&[0xff, 0xd8], &[0xff, 0xd9])?;
+    // Use stable slice operations so this parser works with all supported
+    // Rust toolchains and target architectures.
+    if data.len() < 4 || !data.starts_with(&[0xff, 0xd8]) || !data.ends_with(&[0xff, 0xd9]) {
+        return None;
+    }
     let mut cursor = 2usize;
     while cursor + 1 < data.len() {
         while data.get(cursor) == Some(&0xff) {
