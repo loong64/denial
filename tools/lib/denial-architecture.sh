@@ -12,8 +12,11 @@ denial_arch_normalize() {
     aarch64 | arm64)
       printf '%s\n' aarch64
       ;;
+    loongarch64 | loong64)
+      printf '%s\n' loongarch64
+      ;;
     *)
-      printf 'unsupported build architecture: %s (expected x86_64 or aarch64)\n' \
+      printf 'unsupported build architecture: %s (expected x86_64, aarch64, or loongarch64)\n' \
         "${1:-<empty>}" >&2
       return 1
       ;;
@@ -34,6 +37,9 @@ denial_arch_configure() {
       ;;
     aarch64)
       DENIAL_FLUTTER_ARCH=arm64
+      ;;
+    loongarch64)
+      DENIAL_FLUTTER_ARCH=loong64
       ;;
   esac
 

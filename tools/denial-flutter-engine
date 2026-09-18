@@ -8,6 +8,7 @@ source "$SCRIPT_DIR/lib/denial-architecture.sh"
 denial_arch_configure
 SOURCE_LOCK="$ROOT/prebuilt/flutter-engine/SOURCE_LOCK.json"
 CACHE_SCHEMA='2'
+BUILDTOOLS_PLATFORM="$DENIAL_FLUTTER_PLATFORM"
 CACHE_ROOT="${DENIAL_FLUTTER_ENGINE_CACHE_ROOT:-${XDG_CACHE_HOME:-${HOME:?HOME is required}/.cache}/denial/flutter-engine}"
 CANONICAL_FLUTTER_SOURCE='/mnt/exty/denial-flutter-fork-3.44.7'
 CANONICAL_SKIA_SOURCE='/mnt/exty/denial-skia-fork-3.44.7'
@@ -35,13 +36,8 @@ fi
 BUILD_JOBS="${DENIAL_FLUTTER_ENGINE_JOBS:-$DEFAULT_BUILD_JOBS}"
 MODES=(release debug profile)
 ARTIFACT_STAGING=''
-if [[ "$DENIAL_FLUTTER_ARCH" == x64 ]]; then
-  NATIVE_TOOLCHAIN_JOBS=16
-  GN_ARCH_ARGS=()
-else
-  NATIVE_TOOLCHAIN_JOBS=4
-  GN_ARCH_ARGS=(--linux "--linux-cpu=$DENIAL_FLUTTER_ARCH")
-fi
+NATIVE_TOOLCHAIN_JOBS="$BUILD_JOBS"
+GN_ARCH_ARGS=()
 NATIVE_RELEASE_ENGINE_DIR="$ROOT/prebuilt/flutter-engine/$DENIAL_FLUTTER_PLATFORM-release"
 
 fail() {
@@ -211,7 +207,7 @@ canonicalize_engine_build_id() (
 expected_engine_sha256() {
   local mode="$1"
   awk 'NR == 1 { print $1 }' \
-    "$ROOT/prebuilt/flutter-engine/linux-x64-$mode/libflutter_engine.so.sha256"
+    "$ROOT/prebuilt/flutter-engine/$DENIAL_FLUTTER_PLATFORM-$mode/libflutter_engine.so.sha256"
 }
 
 verify_engine_exports() {
@@ -321,7 +317,7 @@ validate_source_lock() {
   [[ -f "$SOURCE_LOCK" ]] || fail "missing source lock: $SOURCE_LOCK"
   jq -e '
     .schema_version == 1
-    and .flutter.repository == "https://github.com/denialwm/flutter.git"
+    and (.flutter.repository | test("^https://github\\.com/[^/]+/flutter(?:\\.git)?$"))
     and .flutter.branch == "denial/3.44.7-r1"
     and (.flutter.revision | test("^[0-9a-f]{40}$"))
     and (.flutter.upstream_revision | test("^[0-9a-f]{40}$"))
@@ -339,14 +335,14 @@ validate_source_lock() {
 cache_key() {
   {
     printf 'cache-schema=%s\n' "$CACHE_SCHEMA"
-    printf 'target=linux-x64\n'
+    printf 'target=%s\n' "$DENIAL_FLUTTER_PLATFORM"
     printf 'source-lock=%s\n' "$(file_sha256 "$SOURCE_LOCK")"
     local mode
     for mode in "${MODES[@]}"; do
       printf '%s-args=%s\n' \
         "$mode" \
         "$(file_sha256 \
-          "$ROOT/prebuilt/flutter-engine/linux-x64-$mode/args.gn")"
+          "$ROOT/prebuilt/flutter-engine/$DENIAL_FLUTTER_PLATFORM-$mode/args.gn")"
       printf '%s-expected=%s\n' \
         "$mode" \
         "$(expected_engine_sha256 "$mode")"
@@ -404,7 +400,7 @@ stage_artifacts() {
     || fail "cannot stage unverified Flutter engine cache entry: $key"
   for mode in "${MODES[@]}"; do
     source="$artifact_dir/$mode/libflutter_engine.so"
-    destination="$ROOT/prebuilt/flutter-engine/linux-x64-$mode/libflutter_engine.so"
+    destination="$ROOT/prebuilt/flutter-engine/$DENIAL_FLUTTER_PLATFORM-$mode/libflutter_engine.so"
     install -m 0755 -- "$source" "$destination"
   done
   printf 'Staged verified Flutter engines into prebuilt/ for local builds: %s\n' "$key"
@@ -709,7 +705,7 @@ prepare_checkout() {
     || fail "synchronized depot_tools is missing: $checkout_depot"
   (
     cd "$CHECKOUT"
-    PATH="$checkout_depot/.cipd_bin:$checkout_depot:$PATH" \
+    PATH="$checkout_depot:$checkout_depot/.cipd_bin:$PATH" \
       DEPOT_TOOLS_UPDATE=0 \
       VPYTHON_VIRTUALENV_ROOT="$VPYTHON_CACHE_ROOT" \
       gclient runhooks
@@ -737,7 +733,7 @@ build_artifacts() {
   artifact_dir="$(artifact_dir_for_key "$key")"
   build_root="$CHECKOUT/engine/src"
   checkout_depot="$build_root/flutter/third_party/depot_tools"
-  llvm_objcopy="$build_root/flutter/buildtools/linux-x64/clang/bin/llvm-objcopy"
+  llvm_objcopy="$build_root/flutter/buildtools/$BUILDTOOLS_PLATFORM/clang/bin/llvm-objcopy"
   staging="$ARTIFACT_ROOT/.${key}.$$"
 
   [[ -x "$checkout_depot/vpython3" ]] \
@@ -756,16 +752,19 @@ build_artifacts() {
   for mode in "${MODES[@]}"; do
     target="denial_host_$mode"
     output="$BUILD_ROOT/out/$target"
-    expected_args="$ROOT/prebuilt/flutter-engine/linux-x64-$mode/args.gn"
+    expected_args="$ROOT/prebuilt/flutter-engine/$DENIAL_FLUTTER_PLATFORM-$mode/args.gn"
     printf 'Generating %s engine build graph\n' "$mode"
     (
       cd "$build_root"
-      PATH="$checkout_depot/.cipd_bin:$checkout_depot:$PATH" \
+      PATH="/usr/bin:$checkout_depot:$checkout_depot/.cipd_bin:$PATH" \
         DEPOT_TOOLS_UPDATE=0 \
         VPYTHON_VIRTUALENV_ROOT="$VPYTHON_CACHE_ROOT" \
         ./flutter/tools/gn \
           --runtime-mode="$mode" \
           --enable-fontconfig \
+          --target-os=linux \
+          "--linux-cpu=$DENIAL_FLUTTER_ARCH" \
+          "--gn-args=build_analyze_snapshot=true host_cpu=\"$DENIAL_FLUTTER_ARCH\"" \
           --out-dir="$BUILD_ROOT" \
           --target-dir="$target"
     )
@@ -775,7 +774,7 @@ build_artifacts() {
       "$expected_args"
     (
       cd "$build_root"
-      PATH="$checkout_depot/.cipd_bin:$checkout_depot:$PATH" \
+      PATH="/usr/bin:$checkout_depot:$checkout_depot/.cipd_bin:$PATH" \
         DEPOT_TOOLS_UPDATE=0 \
         VPYTHON_VIRTUALENV_ROOT="$VPYTHON_CACHE_ROOT" \
         ./flutter/third_party/gn/gn \
@@ -783,7 +782,7 @@ build_artifacts() {
           --check \
           "$output"
     )
-    PATH="$checkout_depot/.cipd_bin:$checkout_depot:$PATH" \
+    PATH="/usr/bin:$checkout_depot:$checkout_depot/.cipd_bin:$PATH" \
       DEPOT_TOOLS_UPDATE=0 \
       VPYTHON_VIRTUALENV_ROOT="$VPYTHON_CACHE_ROOT" \
       /usr/bin/ninja \
@@ -852,24 +851,27 @@ refresh_metadata() {
 
   build_root="$CHECKOUT/engine/src"
   checkout_depot="$build_root/flutter/third_party/depot_tools"
-  llvm_objcopy="$build_root/flutter/buildtools/linux-x64/clang/bin/llvm-objcopy"
+  llvm_objcopy="$build_root/flutter/buildtools/$BUILDTOOLS_PLATFORM/clang/bin/llvm-objcopy"
   metadata_stage="$(mktemp -d -- "$CACHE_ROOT/.metadata-refresh.XXXXXX")"
   trap '[[ -z "${metadata_stage:-}" ]] || rm -rf --one-file-system -- "$metadata_stage"' EXIT
 
   for mode in "${MODES[@]}"; do
     target="denial_host_$mode"
     output="$BUILD_ROOT/out/$target"
-    expected_args="$ROOT/prebuilt/flutter-engine/linux-x64-$mode/args.gn"
+    expected_args="$ROOT/prebuilt/flutter-engine/$DENIAL_FLUTTER_PLATFORM-$mode/args.gn"
     install -d -m 0700 "$metadata_stage/$mode"
     printf 'Refreshing %s engine build metadata\n' "$mode"
     (
       cd "$build_root"
-      PATH="$checkout_depot/.cipd_bin:$checkout_depot:$PATH" \
+      PATH="/usr/bin:$checkout_depot:$checkout_depot/.cipd_bin:$PATH" \
         DEPOT_TOOLS_UPDATE=0 \
         VPYTHON_VIRTUALENV_ROOT="$VPYTHON_CACHE_ROOT" \
         ./flutter/tools/gn \
           --runtime-mode="$mode" \
           --enable-fontconfig \
+          --target-os=linux \
+          "--linux-cpu=$DENIAL_FLUTTER_ARCH" \
+          "--gn-args=build_analyze_snapshot=true host_cpu=\"$DENIAL_FLUTTER_ARCH\"" \
           --out-dir="$BUILD_ROOT" \
           --target-dir="$target"
     )
@@ -906,13 +908,13 @@ refresh_metadata() {
   for mode in "${MODES[@]}"; do
     install -m 0644 \
       "$metadata_stage/$mode/args.gn" \
-      "$ROOT/prebuilt/flutter-engine/linux-x64-$mode/args.gn"
+      "$ROOT/prebuilt/flutter-engine/$DENIAL_FLUTTER_PLATFORM-$mode/args.gn"
     install -m 0644 \
       "$metadata_stage/$mode/libflutter_engine.so.sha256" \
-      "$ROOT/prebuilt/flutter-engine/linux-x64-$mode/libflutter_engine.so.sha256"
+      "$ROOT/prebuilt/flutter-engine/$DENIAL_FLUTTER_PLATFORM-$mode/libflutter_engine.so.sha256"
     install -m 0755 \
       "$metadata_stage/$mode/libflutter_engine.so" \
-      "$ROOT/prebuilt/flutter-engine/linux-x64-$mode/libflutter_engine.so"
+      "$ROOT/prebuilt/flutter-engine/$DENIAL_FLUTTER_PLATFORM-$mode/libflutter_engine.so"
   done
   printf 'Refreshed tracked Flutter engine metadata for source lock %s\n' \
     "$(file_sha256 "$SOURCE_LOCK")"
@@ -984,7 +986,7 @@ run_flutter_tests() {
     || fail "lock-matched Flutter test launcher is missing: $flutter_test_command"
   local_engine_src_path="$BUILD_ROOT"
   output="$BUILD_ROOT/out/$target"
-  expected_args="$ROOT/prebuilt/flutter-engine/linux-x64-debug/args.gn"
+  expected_args="$ROOT/prebuilt/flutter-engine/$DENIAL_FLUTTER_PLATFORM-debug/args.gn"
 
   printf 'Generating lock-matched Flutter test build graph\n'
   (
@@ -995,6 +997,9 @@ run_flutter_tests() {
       ./flutter/tools/gn \
         --runtime-mode=debug \
         --enable-fontconfig \
+        --target-os=linux \
+        "--linux-cpu=$DENIAL_FLUTTER_ARCH" \
+        "--gn-args=build_analyze_snapshot=true host_cpu=\"$DENIAL_FLUTTER_ARCH\"" \
         --out-dir="$BUILD_ROOT" \
         --target-dir="$target"
   )
@@ -1006,7 +1011,7 @@ run_flutter_tests() {
       VPYTHON_VIRTUALENV_ROOT="$VPYTHON_CACHE_ROOT" \
       ./flutter/third_party/gn/gn gen --check "$output"
   )
-  PATH="$checkout_depot/.cipd_bin:$checkout_depot:$PATH" \
+  PATH="$checkout_depot:$checkout_depot/.cipd_bin:$PATH" \
     DEPOT_TOOLS_UPDATE=0 \
     VPYTHON_VIRTUALENV_ROOT="$VPYTHON_CACHE_ROOT" \
     /usr/bin/ninja \
@@ -1060,25 +1065,28 @@ prepare_app_build() {
   printf 'Generating lock-matched Flutter application build graph\n'
   (
     cd "$build_root"
-    PATH="$checkout_depot/.cipd_bin:$checkout_depot:$PATH" \
+    PATH="/usr/bin:$checkout_depot:$checkout_depot/.cipd_bin:$PATH" \
       DEPOT_TOOLS_UPDATE=0 \
       VPYTHON_VIRTUALENV_ROOT="$VPYTHON_CACHE_ROOT" \
       ./flutter/tools/gn \
         "${GN_ARCH_ARGS[@]}" \
         --runtime-mode=release \
         --enable-fontconfig \
+        --target-os=linux \
+        "--linux-cpu=$DENIAL_FLUTTER_ARCH" \
+        "--gn-args=build_analyze_snapshot=true host_cpu=\"$DENIAL_FLUTTER_ARCH\"" \
         --out-dir="$BUILD_ROOT" \
         --target-dir="$target"
   )
   normalize_generated_args release "$output/args.gn" "$expected_args"
   (
     cd "$build_root"
-    PATH="$checkout_depot/.cipd_bin:$checkout_depot:$PATH" \
+    PATH="$checkout_depot:$checkout_depot/.cipd_bin:$PATH" \
       DEPOT_TOOLS_UPDATE=0 \
       VPYTHON_VIRTUALENV_ROOT="$VPYTHON_CACHE_ROOT" \
       ./flutter/third_party/gn/gn gen --check "$output"
   )
-  PATH="$checkout_depot/.cipd_bin:$checkout_depot:$PATH" \
+  PATH="$checkout_depot:$checkout_depot/.cipd_bin:$PATH" \
     DEPOT_TOOLS_UPDATE=0 \
     VPYTHON_VIRTUALENV_ROOT="$VPYTHON_CACHE_ROOT" \
     /usr/bin/ninja \
@@ -1145,17 +1153,20 @@ prepare_development_sdk() {
   for mode in debug profile; do
     target="denial_host_$mode"
     output="$BUILD_ROOT/out/$target"
-    expected_args="$ROOT/prebuilt/flutter-engine/linux-x64-$mode/args.gn"
+    expected_args="$ROOT/prebuilt/flutter-engine/$DENIAL_FLUTTER_PLATFORM-$mode/args.gn"
 
     printf 'Generating lock-matched %s development SDK build graph\n' "$mode"
     (
       cd "$engine_source_root"
-      PATH="$checkout_depot/.cipd_bin:$checkout_depot:$PATH" \
+      PATH="/usr/bin:$checkout_depot:$checkout_depot/.cipd_bin:$PATH" \
         DEPOT_TOOLS_UPDATE=0 \
         VPYTHON_VIRTUALENV_ROOT="$VPYTHON_CACHE_ROOT" \
         ./flutter/tools/gn \
           --runtime-mode="$mode" \
           --enable-fontconfig \
+          --target-os=linux \
+          "--linux-cpu=$DENIAL_FLUTTER_ARCH" \
+          "--gn-args=build_analyze_snapshot=true host_cpu=\"$DENIAL_FLUTTER_ARCH\"" \
           --out-dir="$BUILD_ROOT" \
           --target-dir="$target"
     )

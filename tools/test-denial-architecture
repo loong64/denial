@@ -23,6 +23,9 @@ assert_mapping() {
   if [[ "$flutter" == x64 ]]; then
     [[ "$(denial_flutter_engine_target release)" == denial_host_release ]] \
       || fail "$input release engine target mapping"
+  elif [[ "$flutter" == loong64 ]]; then
+    [[ "$(denial_flutter_engine_target release)" == denial_host_release_loong64 ]] \
+      || fail "$input release engine target mapping"
   else
     [[ "$(denial_flutter_engine_target release)" == denial_host_release_arm64 ]] \
       || fail "$input release engine target mapping"
@@ -31,6 +34,9 @@ assert_mapping() {
 
 for alias in x86_64 amd64 x64; do
   assert_mapping "$alias" x86_64 x64
+done
+for alias in loongarch64 loong64; do
+  assert_mapping "$alias" loongarch64 loong64
 done
 for alias in aarch64 arm64; do
   assert_mapping "$alias" aarch64 arm64
