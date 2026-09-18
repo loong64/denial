@@ -1,9 +1,9 @@
 {
   "schema_version": 1,
   "flutter": {
-    "repository": "https://github.com/denialwm/flutter.git",
+    "repository": "https://github.com/dart-loong64/flutter.git",
     "branch": "denial/3.44.7-r1",
-    "revision": "c8894357b3a91902c358e8ad5cf0ebc85d45e83e",
+    "revision": "2b8e0dd2228aa17a5272161957107267abc290c9",
     "upstream_revision": "84fc5cbb223bc12f83d65b647ff8a56caf779ffd"
   },
   "skia": {

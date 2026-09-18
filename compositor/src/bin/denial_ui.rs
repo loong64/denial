@@ -21,6 +21,15 @@ const MAX_VM_SERVICE_BYTES: u64 = 64 * 1024;
 const MAX_WORKSPACE_BYTES: usize = 4096;
 static TEMP_SEQUENCE: AtomicU64 = AtomicU64::new(0);
 
+fn flutter_linux_cpu() -> String {
+    match env::consts::ARCH {
+        "x86_64" => "x64".to_owned(),
+        "aarch64" => "arm64".to_owned(),
+        "loongarch64" => "loong64".to_owned(),
+        architecture => architecture.to_owned(),
+    }
+}
+
 fn main() -> ExitCode {
     if let Err(error) = denial_core::cpu_affinity::restore_tool_affinity() {
         eprintln!("denial-ui: could not restore application CPU affinity: {error}");
@@ -250,6 +259,7 @@ struct DevelopmentPaths {
 
 impl DevelopmentPaths {
     fn resolve() -> Result<Self, CliError> {
+        let flutter_cpu = flutter_linux_cpu();
         let cache = cache_home()
             .ok_or_else(|| CliError::new("HOME or an absolute XDG_CACHE_HOME is required"))?
             .join("denial");
@@ -269,21 +279,27 @@ impl DevelopmentPaths {
             if installed {
                 root.join("lib/libflutter_engine.so")
             } else {
-                cache.join("flutter-engine/linux-x64-debug/libflutter_engine.so")
+                cache.join(format!(
+                    "flutter-engine/linux-{flutter_cpu}-debug/libflutter_engine.so"
+                ))
             }
         });
         let profile_engine = env_path("DENIAL_UI_PROFILE_ENGINE").unwrap_or_else(|| {
             if installed {
                 root.join("profile/lib/libflutter_engine.so")
             } else {
-                cache.join("flutter-engine/linux-x64-profile/libflutter_engine.so")
+                cache.join(format!(
+                    "flutter-engine/linux-{flutter_cpu}-profile/libflutter_engine.so"
+                ))
             }
         });
         let packaged_icu = root.join("data/icudtl.dat");
         let icu = if installed && packaged_icu.is_file() {
             packaged_icu
         } else {
-            flutter_root.join("bin/cache/artifacts/engine/linux-x64/icudtl.dat")
+            flutter_root.join(format!(
+                "bin/cache/artifacts/engine/linux-{flutter_cpu}/icudtl.dat"
+            ))
         };
         let build_root =
             env_path("DENIAL_UI_BUILD_ROOT").unwrap_or_else(|| cache.join("ui-development"));
@@ -425,6 +441,7 @@ enum PreparedRuntime {
 fn prepare(workspace: &Path, runtime: PreparedRuntime) -> Result<(), CliError> {
     let paths = DevelopmentPaths::resolve()?;
     validate_toolchain(&paths)?;
+    let flutter_cpu = flutter_linux_cpu();
     let (engine, configured_bundle, build_mode, track_widget_creation, tree_shake_icons, target) =
         match runtime {
             PreparedRuntime::Debug => (
@@ -433,7 +450,7 @@ fn prepare(workspace: &Path, runtime: PreparedRuntime) -> Result<(), CliError> {
                 "debug",
                 "true",
                 "false",
-                "copy_flutter_bundle",
+                "copy_flutter_bundle".to_owned(),
             ),
             PreparedRuntime::Profile => (
                 &paths.profile_engine,
@@ -441,7 +458,7 @@ fn prepare(workspace: &Path, runtime: PreparedRuntime) -> Result<(), CliError> {
                 "profile",
                 "false",
                 "true",
-                "profile_bundle_linux-x64_assets",
+                format!("profile_bundle_linux-{flutter_cpu}_assets"),
             ),
         };
     validate_engine(engine, build_mode)?;
@@ -471,7 +488,7 @@ fn prepare(workspace: &Path, runtime: PreparedRuntime) -> Result<(), CliError> {
         OsString::from(format!("--output={}", assembly_output.display())),
         OsString::from("-dTargetFile=lib/main.dart"),
         OsString::from(format!("-dBuildMode={build_mode}")),
-        OsString::from("-dTargetPlatform=linux-x64"),
+        OsString::from(format!("-dTargetPlatform=linux-{flutter_cpu}")),
         OsString::from("-dDartObfuscation=false"),
         OsString::from(format!("-dTrackWidgetCreation={track_widget_creation}")),
         OsString::from(format!("-dTreeShakeIcons={tree_shake_icons}")),

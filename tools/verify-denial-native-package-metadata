@@ -20,6 +20,7 @@ package_release="$4"
 flutter_engine_abi="$5"
 glibc_baseline="$6"
 expected_version="${package_version}-${package_release}"
+expected_debian_arch="${DENIAL_PACKAGE_DEBIAN_ARCH:-$(dpkg --print-architecture 2>/dev/null || printf amd64)}"
 
 [[ -f "$package" && ! -L "$package" ]] \
   || fail "package is not a regular file: $package"
@@ -47,8 +48,8 @@ verify_deb() {
   package_arch="$(dpkg-deb --field "$package" Architecture)"
   [[ "$(dpkg-deb --field "$package" Version)" == "$expected_version" ]] \
     || fail "$(basename -- "$package") has the wrong Debian version"
-  [[ "$package_arch" == amd64 ]] \
-    || fail "$(basename -- "$package") targets $package_arch, expected amd64"
+  [[ "$package_arch" == "$expected_debian_arch" ]] \
+    || fail "$(basename -- "$package") targets $package_arch, expected $expected_debian_arch"
   package_dependencies="$(dpkg-deb --field "$package" Depends)"
   package_provides="$(dpkg-deb --field "$package" Provides 2>/dev/null || true)"
   payload_listing="$(dpkg-deb --fsys-tarfile "$package" | bsdtar -tf -)"
