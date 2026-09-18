@@ -1099,8 +1099,10 @@ fn png_dimensions(data: &[u8]) -> Option<(u32, u32)> {
 }
 
 fn jpeg_dimensions(data: &[u8]) -> Option<(u32, u32)> {
-    data.strip_prefix(&[0xff, 0xd8])?
-        .strip_suffix(&[0xff, 0xd9])?;
+    // Verify JPEG SOI and EOI markers and ensure data is at least 4 bytes.
+    if data.len() < 4 || !data.starts_with(&[0xff, 0xd8]) || !data.ends_with(&[0xff, 0xd9]) {
+        return None;
+    }
     let mut cursor = 2usize;
     while cursor + 1 < data.len() {
         while data.get(cursor) == Some(&0xff) {
