@@ -5,6 +5,15 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd -- "$SCRIPT_DIR/.." && pwd)"
 SOURCE_LOCK="$ROOT/prebuilt/flutter-engine/SOURCE_LOCK.json"
 CACHE_SCHEMA='2'
+host_arch="$(uname -m)"
+case "$host_arch" in
+  x86_64) FLUTTER_LINUX_CPU=x64 ;;
+  aarch64) FLUTTER_LINUX_CPU=arm64 ;;
+  loongarch64) FLUTTER_LINUX_CPU=loong64 ;;
+  *) FLUTTER_LINUX_CPU="$host_arch" ;;
+esac
+FLUTTER_ENGINE_PLATFORM="linux-$FLUTTER_LINUX_CPU"
+BUILDTOOLS_PLATFORM="$FLUTTER_ENGINE_PLATFORM"
 CACHE_ROOT="${DENIAL_FLUTTER_ENGINE_CACHE_ROOT:-${XDG_CACHE_HOME:-${HOME:?HOME is required}/.cache}/denial/flutter-engine}"
 CANONICAL_FLUTTER_SOURCE='/mnt/exty/denial-flutter-fork-3.44.7'
 CANONICAL_SKIA_SOURCE='/mnt/exty/denial-skia-fork-3.44.7'
@@ -193,7 +202,7 @@ canonicalize_engine_build_id() (
 expected_engine_sha256() {
   local mode="$1"
   awk 'NR == 1 { print $1 }' \
-    "$ROOT/prebuilt/flutter-engine/linux-x64-$mode/libflutter_engine.so.sha256"
+    "$ROOT/prebuilt/flutter-engine/linux-$FLUTTER_LINUX_CPU-$mode/libflutter_engine.so.sha256"
 }
 
 verify_engine_exports() {
@@ -275,7 +284,7 @@ validate_source_lock() {
   [[ -f "$SOURCE_LOCK" ]] || fail "missing source lock: $SOURCE_LOCK"
   jq -e '
     .schema_version == 1
-    and .flutter.repository == "https://github.com/denialwm/flutter.git"
+    and (.flutter.repository | test("^https://github\\.com/[^/]+/flutter(?:\\.git)?$"))
     and .flutter.branch == "denial/3.44.7-r1"
     and (.flutter.revision | test("^[0-9a-f]{40}$"))
     and (.flutter.upstream_revision | test("^[0-9a-f]{40}$"))
@@ -293,14 +302,14 @@ validate_source_lock() {
 cache_key() {
   {
     printf 'cache-schema=%s\n' "$CACHE_SCHEMA"
-    printf 'target=linux-x64\n'
+    printf 'target=%s\n' "$FLUTTER_ENGINE_PLATFORM"
     printf 'source-lock=%s\n' "$(file_sha256 "$SOURCE_LOCK")"
     local mode
     for mode in "${MODES[@]}"; do
       printf '%s-args=%s\n' \
         "$mode" \
         "$(file_sha256 \
-          "$ROOT/prebuilt/flutter-engine/linux-x64-$mode/args.gn")"
+          "$ROOT/prebuilt/flutter-engine/linux-$FLUTTER_LINUX_CPU-$mode/args.gn")"
       printf '%s-expected=%s\n' \
         "$mode" \
         "$(expected_engine_sha256 "$mode")"
@@ -358,7 +367,7 @@ stage_artifacts() {
     || fail "cannot stage unverified Flutter engine cache entry: $key"
   for mode in "${MODES[@]}"; do
     source="$artifact_dir/$mode/libflutter_engine.so"
-    destination="$ROOT/prebuilt/flutter-engine/linux-x64-$mode/libflutter_engine.so"
+    destination="$ROOT/prebuilt/flutter-engine/linux-$FLUTTER_LINUX_CPU-$mode/libflutter_engine.so"
     install -m 0755 -- "$source" "$destination"
   done
   printf 'Staged verified Flutter engines into prebuilt/ for local builds: %s\n' "$key"
@@ -647,7 +656,7 @@ build_artifacts() {
   artifact_dir="$(artifact_dir_for_key "$key")"
   build_root="$CHECKOUT/engine/src"
   checkout_depot="$build_root/flutter/third_party/depot_tools"
-  llvm_objcopy="$build_root/flutter/buildtools/linux-x64/clang/bin/llvm-objcopy"
+  llvm_objcopy="$build_root/flutter/buildtools/$BUILDTOOLS_PLATFORM/clang/bin/llvm-objcopy"
   staging="$ARTIFACT_ROOT/.${key}.$$"
 
   [[ -x "$checkout_depot/vpython3" ]] \
@@ -666,7 +675,7 @@ build_artifacts() {
   for mode in "${MODES[@]}"; do
     target="denial_host_$mode"
     output="$BUILD_ROOT/out/$target"
-    expected_args="$ROOT/prebuilt/flutter-engine/linux-x64-$mode/args.gn"
+    expected_args="$ROOT/prebuilt/flutter-engine/linux-$FLUTTER_LINUX_CPU-$mode/args.gn"
     printf 'Generating %s engine build graph\n' "$mode"
     (
       cd "$build_root"
@@ -676,6 +685,9 @@ build_artifacts() {
         ./flutter/tools/gn \
           --runtime-mode="$mode" \
           --enable-fontconfig \
+          --target-os=linux \
+          "--linux-cpu=$FLUTTER_LINUX_CPU" \
+          "--gn-args=build_analyze_snapshot=true host_cpu=\"$FLUTTER_LINUX_CPU\"" \
           --out-dir="$BUILD_ROOT" \
           --target-dir="$target"
     )
@@ -762,14 +774,14 @@ refresh_metadata() {
 
   build_root="$CHECKOUT/engine/src"
   checkout_depot="$build_root/flutter/third_party/depot_tools"
-  llvm_objcopy="$build_root/flutter/buildtools/linux-x64/clang/bin/llvm-objcopy"
+  llvm_objcopy="$build_root/flutter/buildtools/$BUILDTOOLS_PLATFORM/clang/bin/llvm-objcopy"
   metadata_stage="$(mktemp -d -- "$CACHE_ROOT/.metadata-refresh.XXXXXX")"
   trap '[[ -z "${metadata_stage:-}" ]] || rm -rf --one-file-system -- "$metadata_stage"' EXIT
 
   for mode in "${MODES[@]}"; do
     target="denial_host_$mode"
     output="$BUILD_ROOT/out/$target"
-    expected_args="$ROOT/prebuilt/flutter-engine/linux-x64-$mode/args.gn"
+    expected_args="$ROOT/prebuilt/flutter-engine/linux-$FLUTTER_LINUX_CPU-$mode/args.gn"
     install -d -m 0700 "$metadata_stage/$mode"
     printf 'Refreshing %s engine build metadata\n' "$mode"
     (
@@ -780,6 +792,9 @@ refresh_metadata() {
         ./flutter/tools/gn \
           --runtime-mode="$mode" \
           --enable-fontconfig \
+          --target-os=linux \
+          "--linux-cpu=$FLUTTER_LINUX_CPU" \
+          "--gn-args=build_analyze_snapshot=true host_cpu=\"$FLUTTER_LINUX_CPU\"" \
           --out-dir="$BUILD_ROOT" \
           --target-dir="$target"
     )
@@ -816,13 +831,13 @@ refresh_metadata() {
   for mode in "${MODES[@]}"; do
     install -m 0644 \
       "$metadata_stage/$mode/args.gn" \
-      "$ROOT/prebuilt/flutter-engine/linux-x64-$mode/args.gn"
+      "$ROOT/prebuilt/flutter-engine/linux-$FLUTTER_LINUX_CPU-$mode/args.gn"
     install -m 0644 \
       "$metadata_stage/$mode/libflutter_engine.so.sha256" \
-      "$ROOT/prebuilt/flutter-engine/linux-x64-$mode/libflutter_engine.so.sha256"
+      "$ROOT/prebuilt/flutter-engine/linux-$FLUTTER_LINUX_CPU-$mode/libflutter_engine.so.sha256"
     install -m 0755 \
       "$metadata_stage/$mode/libflutter_engine.so" \
-      "$ROOT/prebuilt/flutter-engine/linux-x64-$mode/libflutter_engine.so"
+      "$ROOT/prebuilt/flutter-engine/linux-$FLUTTER_LINUX_CPU-$mode/libflutter_engine.so"
   done
   printf 'Refreshed tracked Flutter engine metadata for source lock %s\n' \
     "$(file_sha256 "$SOURCE_LOCK")"
@@ -886,7 +901,7 @@ run_flutter_tests() {
     || fail "lock-matched Flutter test launcher is missing: $flutter_test_command"
   local_engine_src_path="$BUILD_ROOT"
   output="$BUILD_ROOT/out/$target"
-  expected_args="$ROOT/prebuilt/flutter-engine/linux-x64-debug/args.gn"
+  expected_args="$ROOT/prebuilt/flutter-engine/linux-$FLUTTER_LINUX_CPU-debug/args.gn"
 
   printf 'Generating lock-matched Flutter test build graph\n'
   (
@@ -897,6 +912,9 @@ run_flutter_tests() {
       ./flutter/tools/gn \
         --runtime-mode=debug \
         --enable-fontconfig \
+        --target-os=linux \
+        "--linux-cpu=$FLUTTER_LINUX_CPU" \
+        "--gn-args=build_analyze_snapshot=true host_cpu=\"$FLUTTER_LINUX_CPU\"" \
         --out-dir="$BUILD_ROOT" \
         --target-dir="$target"
   )
@@ -952,7 +970,7 @@ prepare_app_build() {
   build_root="$CHECKOUT/engine/src"
   checkout_depot="$build_root/flutter/third_party/depot_tools"
   output="$BUILD_ROOT/out/$target"
-  expected_args="$ROOT/prebuilt/flutter-engine/linux-x64-release/args.gn"
+  expected_args="$ROOT/prebuilt/flutter-engine/linux-$FLUTTER_LINUX_CPU-release/args.gn"
 
   printf 'Generating lock-matched Flutter application build graph\n'
   (
@@ -963,6 +981,9 @@ prepare_app_build() {
       ./flutter/tools/gn \
         --runtime-mode=release \
         --enable-fontconfig \
+        --target-os=linux \
+        "--linux-cpu=$FLUTTER_LINUX_CPU" \
+        "--gn-args=build_analyze_snapshot=true host_cpu=\"$FLUTTER_LINUX_CPU\"" \
         --out-dir="$BUILD_ROOT" \
         --target-dir="$target"
   )
@@ -1023,7 +1044,7 @@ prepare_development_sdk() {
   for mode in debug profile; do
     target="denial_host_$mode"
     output="$BUILD_ROOT/out/$target"
-    expected_args="$ROOT/prebuilt/flutter-engine/linux-x64-$mode/args.gn"
+    expected_args="$ROOT/prebuilt/flutter-engine/linux-$FLUTTER_LINUX_CPU-$mode/args.gn"
 
     printf 'Generating lock-matched %s development SDK build graph\n' "$mode"
     (
@@ -1034,6 +1055,9 @@ prepare_development_sdk() {
         ./flutter/tools/gn \
           --runtime-mode="$mode" \
           --enable-fontconfig \
+          --target-os=linux \
+          "--linux-cpu=$FLUTTER_LINUX_CPU" \
+          "--gn-args=build_analyze_snapshot=true host_cpu=\"$FLUTTER_LINUX_CPU\"" \
           --out-dir="$BUILD_ROOT" \
           --target-dir="$target"
     )

@@ -61,18 +61,28 @@ FLUTTER_ENGINE_CACHE_ROOT="${DENIAL_FLUTTER_ENGINE_CACHE_ROOT:-$CACHE_HOME/denia
 LOCAL_ENGINE_SRC_PATH="$FLUTTER_ENGINE_CACHE_ROOT/build"
 LOCAL_ENGINE_TARGET="denial_host_release"
 
+# Flutter names Linux engine artifacts by target CPU. Normalize the two
+# system spellings that differ from Flutter, and preserve other architectures.
+host_arch="$(uname -m)"
+case "$host_arch" in
+    x86_64) FLUTTER_LINUX_CPU=x64 ;;
+    aarch64) FLUTTER_LINUX_CPU=arm64 ;;
+    loongarch64) FLUTTER_LINUX_CPU=loong64 ;;
+    *) FLUTTER_LINUX_CPU="$host_arch" ;;
+esac
+
 COMPOSITOR_ROOT="$ROOT/compositor"
 MANIFEST="$COMPOSITOR_ROOT/Cargo.toml"
-BUNDLE="${DENIAL_PC_BUNDLE:-$ROOT/dart_shell/build/linux/x64/release/bundle}"
+BUNDLE="${DENIAL_PC_BUNDLE:-$ROOT/dart_shell/build/linux/$FLUTTER_LINUX_CPU/release/bundle}"
 BUNDLE_ASSEMBLY="${DENIAL_PC_BUNDLE_ASSEMBLY:-$BUILD_ROOT/flutter/release}"
-SETTINGS_BUNDLE="${DENIAL_PC_SETTINGS_BUNDLE:-$ROOT/settings_app/build/linux/x64/release/bundle}"
+SETTINGS_BUNDLE="${DENIAL_PC_SETTINGS_BUNDLE:-$ROOT/settings_app/build/linux/$FLUTTER_LINUX_CPU/release/bundle}"
 SETTINGS_BINARY="${DENIAL_SETTINGS_BINARY:-$SETTINGS_BUNDLE/denial-settings}"
 SETTINGS_DESKTOP_SOURCE="$ROOT/packaging/arch/dev.denial.Settings.desktop"
 USER_DATA_HOME="${XDG_DATA_HOME:-${HOME:?HOME is required}/.local/share}"
 SETTINGS_DESKTOP_FILE="${DENIAL_SETTINGS_DESKTOP_FILE:-$USER_DATA_HOME/applications/dev.denial.Settings.desktop}"
 ENGINE="${DENIAL_PC_ENGINE:-$BUNDLE/lib/libflutter_engine.so}"
-ICU_DATA="$FLUTTER_SDK_ROOT/bin/cache/artifacts/engine/linux-x64/icudtl.dat"
-PREBUILT_ENGINE_DIR="$ROOT/prebuilt/flutter-engine/linux-x64-release"
+ICU_DATA="$FLUTTER_SDK_ROOT/bin/cache/artifacts/engine/linux-$FLUTTER_LINUX_CPU/icudtl.dat"
+PREBUILT_ENGINE_DIR="$ROOT/prebuilt/flutter-engine/linux-$FLUTTER_LINUX_CPU-release"
 PREBUILT_ENGINE="${DENIAL_PC_ENGINE_SOURCE:-$PREBUILT_ENGINE_DIR/libflutter_engine.so}"
 PREBUILT_ENGINE_SHA256="$PREBUILT_ENGINE_DIR/libflutter_engine.so.sha256"
 PREBUILT_ENGINE_REVISION="$PREBUILT_ENGINE_DIR/ENGINE_REVISION"
@@ -135,7 +145,7 @@ Usage: tools/denial-pc COMMAND
 
 Commands:
   bootstrap         Validate or provision Flutter, then fetch Rust crates
-  bundle            Build only the x64 Dart/Flutter bundle
+  bundle            Build only the native Linux Dart/Flutter bundle
   settings          Build only the standalone Flutter Settings application
   refresh           Build the bundle and reload its Flutter runtime in this session
   kms-refresh       Re-evaluate the live KMS topology without ending the session
@@ -624,11 +634,11 @@ build_bundle() (
             --output="$assembly" \
             -dTargetFile=lib/main.dart \
             -dBuildMode=release \
-            -dTargetPlatform=linux-x64 \
+            -dTargetPlatform=linux-$FLUTTER_LINUX_CPU \
             -dDartObfuscation=false \
             -dTrackWidgetCreation=true \
             -dTreeShakeIcons=true \
-            release_bundle_linux-x64_assets
+            release_bundle_linux-${FLUTTER_LINUX_CPU}_assets
     )
     require_file "$assembly/lib/libapp.so"
     require_file "$ICU_DATA"
